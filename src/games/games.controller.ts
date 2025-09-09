@@ -1,6 +1,14 @@
-import { Controller, Get, Post, Body, Patch, Param } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  ParseEnumPipe,
+} from '@nestjs/common';
 import { GamesService } from './games.service';
-import { CreateGameDto } from './dto/create-game.dto';
+import { CreateGameDto, GameState } from './dto/create-game.dto';
 import { UpdateGameDto } from './dto/update-game.dto';
 
 @Controller('games')
@@ -35,5 +43,10 @@ export class GamesController {
   @Patch(':id/end')
   endGame(@Param('id') id: string, @Body() updateGameDto: UpdateGameDto) {
     return this.gamesService.endGame(+id, updateGameDto);
+  }
+
+  @Get('status/:state')
+  findByState(@Param('state', new ParseEnumPipe(GameState)) state: GameState) {
+    return this.gamesService.findByState(state);
   }
 }

@@ -23,13 +23,23 @@ export class CreateGameDto {
   @Min(2)
   maxPlayers: number;
 
-  @IsString({ each: true })
+  @IsInt()
   @IsOptional()
-  playersName?: string[];
+  userId?: number;
 
   @IsEnum(GameState)
   @IsOptional()
   state?: GameState;
+
+  @IsObject()
+  @IsOptional()
+  score?: Record<string, number>;
+}
+
+export class UpdateGameDto {
+  @IsInt()
+  @IsOptional()
+  userId?: number;
 
   @IsObject()
   @IsOptional()

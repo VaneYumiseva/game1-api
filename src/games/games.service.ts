@@ -1,30 +1,55 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { CreateGameDto, GameState } from './dto/create-game.dto';
 import { UpdateGameDto } from './dto/update-game.dto';
 import { Game } from './entities/game.entity';
 import { InjectModel } from '@nestjs/sequelize';
+import { UsersService } from 'src/users/users.service';
+import { User } from 'src/users/entities/user.entity';
 
 @Injectable()
 export class GamesService {
-  findAll() {
-    throw new Error('Method not implemented.');
-  }
-  private readonly logger = new Logger(GamesService.name);
   gameService: any;
 
-  constructor(@InjectModel(Game) private gameModel: typeof Game) {}
+  async findAll() {
+    return this.gameModel.findAll({
+      include: [
+        {
+          model: User,
+          as: 'players',
+          attributes: ['id', 'fullname', 'email'],
+          through: { attributes: [] },
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+    });
+  }
+  private readonly logger = new Logger('GamesService');
+
+  constructor(
+    @InjectModel(Game) private gameModel: typeof Game,
+    private readonly userService: UsersService,
+  ) {}
 
   async create(createGameDto: CreateGameDto) {
-    const { name, maxPlayers, playersName, state } = createGameDto;
+    const { name, maxPlayers, userId, state } = createGameDto;
 
     try {
       const newGame = await this.gameModel.create({
         name: name,
         maxPlayers: maxPlayers,
-        players: playersName ? [playersName] : [],
         state: state || 'waiting',
         score: null,
       });
+
+      if (userId) {
+        const user = await this.userService.findOne(userId);
+        await newGame.$add('players', user);
+      }
 
       return newGame;
     } catch (error) {
@@ -37,6 +62,14 @@ export class GamesService {
       where: {
         id: id,
       },
+      include: [
+        {
+          model: User,
+          as: 'players',
+          attributes: ['id', 'fullname', 'email'],
+          through: { attributes: [] },
+        },
+      ],
     });
 
     if (!game) {
@@ -46,25 +79,37 @@ export class GamesService {
     return game;
   }
 
-  async joinGame(id: number, updateGameDto: UpdateGameDto) {
-    const { playersName } = updateGameDto;
-    const game = await this.findOne(id);
+  async joinGame(gameId: number, updateGameDto: UpdateGameDto) {
+    const { userId } = updateGameDto;
 
-    if (game.dataValues.players.includes(playersName!)) {
-      throw new BadRequestException('The player has already joined!');
+    if (!userId) {
+      throw new BadRequestException('User ID is required to join a game');
     }
 
-    const newPlayers = [...game.dataValues.players, playersName!];
-    if (newPlayers.length >= game.dataValues.maxPlayers) {
-      throw new BadRequestException('Max players limit reached');
+    const game = await this.findOne(gameId);
+    if (game.dataValues.state !== GameState.WAITING) {
+      throw new BadRequestException('Game is not joinable');
     }
 
-    try {
-      await game.update({ players: newPlayers });
-      return { message: 'Joined success!' };
-    } catch (error) {
-      this.handleDBException(error);
+    const user = await this.userService.findOne(userId);
+
+    const alreadyJoined = game.dataValues.players.find(
+      (player) => player.id === user.id,
+    );
+
+    if (alreadyJoined) {
+      throw new BadRequestException('User is already in the game');
     }
+
+    if (game.dataValues.players.length >= game.dataValues.maxPlayers) {
+      throw new BadRequestException('Game is full');
+    }
+
+    await game.$add('players', user);
+
+    return {
+      message: `User ${user.dataValues.fullname} joined the game ${game.dataValues.name}`,
+    };
   }
 
   async startGame(id: number) {
@@ -97,12 +142,32 @@ export class GamesService {
     return this.gameService.endGame(+id, updateGameDto);
   }
 
-  private handleDBException(error: any) {
-    //this.logger.error(error);
+  async findByState(state: GameState) {
+    // Validación defensiva por si llega string suelto
+    if (!Object.values(GameState).includes(state)) {
+      throw new BadRequestException(`Invalid state "${state}"`);
+    }
+
+    return this.gameModel.findAll({
+      where: { state },
+      include: [
+        {
+          model: User,
+          as: 'players',
+          attributes: ['id', 'fullname', 'email'],
+          through: { attributes: [] },
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+    });
+  }
+
+  private handleDBException(error: any): never {
+    this.logger.error(error);
     if (error.parent.code === '23505') {
       throw new BadRequestException(error.parent.detail);
     }
     this.logger.error(error);
-    throw new BadRequestException('Something went wrong');
+    throw new InternalServerErrorException('Something went wrong');
   }
 }
